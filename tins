@@ -1,0 +1,229 @@
+#!/bin/ksh
+# Olaf Bohlen <olbohlen@eenfach.de> 2017-06-26
+# tins is not sneep
+# somewhat replacement for the ex-sun "sneep" command to set the chassis serial
+# number in the eeprom
+
+
+# CDDL HEADER START
+
+# The contents of this file are subject to the terms of the
+# Common Development and Distribution License (the "License").
+# You may not use this file except in compliance with the License.
+
+# You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+# or http://www.opensolaris.org/os/licensing.
+# See the License for the specific language governing permissions
+# and limitations under the License.
+
+# When distributing Covered Code, include this CDDL HEADER in each
+# file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+# If applicable, add the following below this CDDL HEADER, with the
+# fields enclosed by brackets "[]" replaced with your own identifying
+# information: Portions Copyright [yyyy] [name of copyright owner]
+
+# CDDL HEADER END
+
+usage() {
+    cat <<EOF
+Usage: /usr/sbin/tins [-acehp] | [-s newsn]
+       
+       -a show all serial numbers
+       
+       -c show serial number in config
+
+       -e show serial number in eeprom
+
+       -h show this usage
+
+       -p show serial number from hardware platform
+
+       -s set eeprom and config serial to "newsn"
+       
+If called as "sneep", the output format is compatible to sneep.
+
+EOF
+}
+
+checkactive() {
+    # is use-nvramrc? true, if not serial number will not be printed
+    if [ x$( /usr/sbin/eeprom use-nvramrc? | cut -d '=' -f 2 ) != xtrue ]; then
+	printf "W: note, you have to set eeprom use-nvramrc?=true !\n" >/dev/fd/2
+    fi
+}
+
+setsn() {
+    typeset sn
+    typeset tmp_sn
+    typeset my_nvramrc
+    sn="$1"
+
+    # we need to be euid=0 to run this
+    if [ $(/usr/bin/id -u) -gt 0 ]; then
+	printf "E: need to be run as root!\n" >/dev/fd/2
+    fi
+
+    # format the SN: remove whitespaces, turn uppercase
+    tmp_sn=$(echo "${sn}" | tr -d '[\t ]' | tr '[a-z]' '[A-Z]')
+    sn=${tmp_sn}
+    
+    # write specified serialnumber to defaults file
+    printf ",g,^ChassisSN,d\nw\nq\n" | ed /etc/default/tins 2>&1 >/dev/null 
+    printf "ChassisSN ${sn}\n" >>/etc/default/tins
+    
+    # save the current nvramrc
+    my_nvramrc=$(/usr/sbin/eeprom nvramrc | sed -e 's/nvramrc=//')
+
+    # check if there is data in the nvramrc...
+    if [ $( echo ${my_nvramrc} | grep -c "data not available" ) -gt 0  ]; then
+	# clear variable, because eeprom just wrote that nvramrc is empty.
+	my_nvramrc=""
+    fi
+    my_nvramrc=$(printf "${my_nvramrc}\n.\" ChassisSerialNumber ${sn} \" cr\n")
+
+    eeprom nvramrc="$(printf "${my_nvramrc}\n" | sort -u )"
+
+    if [ $? -gt 0 ]; then
+	printf "E: eeeks - something went terribly wrong here - check eeprom nvramrc immediate!\n" >/dev/fd/2
+    exit 2
+fi
+
+}
+
+getsnconf() {
+    typeset sn
+
+    if [ -f /etc/default/tins ]; then
+	sn=$(nawk '$1~/^ChassisSN$/ { print $2 }' </etc/default/tins)
+    fi
+
+    printf "%s\n" "${sn}"
+}
+
+getsn() {
+    typeset sn
+    
+    sn=$(/usr/sbin/eeprom nvramrc | nawk '$0~/ChassisSerialNumber/ { print $3 }')
+    if [ $? -gt 0 ]; then
+	printf "E: error reading sn from eeprom - maybe unset?\n" >/dev/fd/2
+	exit 1
+    fi
+    
+    printf "%s\n" "${sn}"
+}
+
+gethwsn() {
+    # try to read the serial number from the smbios tables
+    typeset hwsn
+    typeset chkilom
+
+    # we need to be euid=0 to run this
+    if [ $(/usr/bin/id -u) -gt 0 ]; then
+	printf "E: need to be run as root!\n" >/dev/fd/2
+	exit 1
+    fi
+    
+    case $(uname -p) in
+	sparc)
+	    # check if this system is ILOM equipped:
+	    chkilom=$(/usr/sbin/ipmitool sunoem cli "show /SYS power_state" | nawk '$1~/^power_state$/ { print $NF }')
+	    if [ x${chkilom} == xOn ]; then
+		hwsn=$(/usr/sbin/ipmitool sunoem cli "show /SYS product_serial_number" | nawk '$1~/^product_serial_number$/ { print $NF }')
+	    else
+		printf "E: unable to read hardware serial number!" >/dev/fd/2
+		exit 1
+	    fi
+	;;
+
+	i386)
+	    if [ -x /usr/sbin/smbios ]; then
+		hwsn=$(/usr/sbin/smbios -t SMB_TYPE_SYSTEM | nawk '$1~/^Serial/ && $2~/^Number:/ { print $NF }')
+	    else
+		printf "E: /usr/sbin/smbios not found, aborting!" >/dev/fd/2
+		exit 1
+	    fi
+	    ;;
+	*)
+	    printf "E: unsupported platform!" >/dev/fd/2
+	    exit 1
+	    ;;
+    esac
+    
+    printf "%s\n" "${hwsn}"
+
+}
+
+
+## main ##
+
+# sneep compat mode
+if [ x${0##*/} == xsneep ]; then
+    g_sneep=true
+fi
+
+# get arguments
+while getopts acehps: argv 2>/dev/null; do
+    case ${argv} in
+	a)
+	    # show all
+	    if [ x${g_sneep} == xtrue ]; then
+		printf "    ChassisSerialNumber from eeprom :\n"
+	    else
+		printf "ChassisSN eeprom: "
+	    fi    
+	    getsn
+	    
+	    if [ x${g_sneep} == xtrue ]; then
+		printf "    ChassisSerialNumber from hardware :\n"
+	    else
+		printf "ChassisSN hardware: "
+	    fi    
+	    gethwsn
+
+	    if [ x${g_sneep} == xtrue ]; then
+		printf "    ChassisSerialNumber from backup : /etc/default/tins :\n"
+	    else
+		printf "ChassisSN config: "
+	    fi
+	    getsnconf
+	    exit 0
+	    ;;
+	
+	c)
+	    # show config sn
+	    getsnconf
+	    exit 0
+	    ;;
+
+	e)
+	    # show eeprom sn
+	    getsn
+	    exit 0
+	    ;;
+
+	p)
+	    # show hardware sn
+	    gethwsn
+	    exit 0
+	    ;;
+	
+        s)
+	    setsn "${OPTARG}"
+	    exit 0
+	    ;;
+	
+	?)
+	    if [ x${g_sneep} != xtrue ]; then
+		# if called as sneep, discard usage on unknown options and do nothing
+		usage
+	    fi
+	    exit 0
+		
+	    ;;
+    esac
+done
+shift `expr $OPTIND - 1`
+
+# if called without arguments, print eeprom sn
+getsn
+exit 0
