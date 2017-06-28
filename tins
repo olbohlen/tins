@@ -45,13 +45,6 @@ If called as "sneep", the output format is compatible to sneep.
 EOF
 }
 
-checkactive() {
-    # is use-nvramrc? true, if not serial number will not be printed
-    if [ x$( /usr/sbin/eeprom use-nvramrc? | cut -d '=' -f 2 ) != xtrue ]; then
-	printf "W: note, you have to set eeprom use-nvramrc?=true !\n" >/dev/fd/2
-    fi
-}
-
 setsn() {
     typeset sn
     typeset tmp_sn
@@ -79,9 +72,22 @@ setsn() {
 	# clear variable, because eeprom just wrote that nvramrc is empty.
 	my_nvramrc=""
     fi
-    my_nvramrc=$(printf "${my_nvramrc}\n.\" ChassisSerialNumber ${sn} \" cr\n")
 
-    eeprom nvramrc="$(printf "${my_nvramrc}\n" | sort -u )"
+    case $(uname -p) in
+	i386)
+	    # on intel, nvramrc my not contain newlines
+	    my_nvramrc=$(printf "${my_nvramrc} .\" ChassisSerialNumber ${sn} \" cr\n" | tr -s '\n' ' ')
+	    eeprom nvramrc="${my_nvramrc}"
+	    ;;
+
+	sparc)
+ 	    my_nvramrc=$(printf "${my_nvramrc}\n.\" ChassisSerialNumber ${sn} \" cr\n")
+	    eeprom nvramrc="$(printf "${my_nvramrc}\n" | sort -u )"
+	    ;;
+	*)
+	    exit 2
+	    ;;
+    esac
 
     if [ $? -gt 0 ]; then
 	printf "E: eeeks - something went terribly wrong here - check eeprom nvramrc immediate!\n" >/dev/fd/2
@@ -102,12 +108,7 @@ getsnconf() {
 
 getsn() {
     typeset sn
-    
-    sn=$(/usr/sbin/eeprom nvramrc | nawk '$0~/ChassisSerialNumber/ { print $3 }')
-    if [ $? -gt 0 ]; then
-	printf "E: error reading sn from eeprom - maybe unset?\n" >/dev/fd/2
-	exit 1
-    fi
+    sn=$(/usr/sbin/eeprom nvramrc 2>/dev/null | nawk '$0~/ChassisSerialNumber/ { printf("%s\n",substr($0, 20+match($0, "ChassisSerialNumber [A-Z,0-9]*"), RLENGTH-20))}' )
     
     printf "%s\n" "${sn}"
 }
@@ -137,7 +138,7 @@ gethwsn() {
 
 	i386)
 	    if [ -x /usr/sbin/smbios ]; then
-		hwsn=$(/usr/sbin/smbios -t SMB_TYPE_SYSTEM | nawk '$1~/^Serial/ && $2~/^Number:/ { print $NF }')
+		hwsn=$(/usr/sbin/smbios -t SMB_TYPE_SYSTEM 2>/dev/null | nawk '$1~/^Serial/ && $2~/^Number:/ { print $NF }')
 	    else
 		printf "E: /usr/sbin/smbios not found, aborting!" >/dev/fd/2
 		exit 1
@@ -224,6 +225,11 @@ while getopts acehps: argv 2>/dev/null; do
 done
 shift `expr $OPTIND - 1`
 
-# if called without arguments, print eeprom sn
-getsn
+# if called without arguments, print eeprom sn on GZ and config sn on NGZ
+if [ x$(/usr/bin/zonename) == xglobal ]; then
+    getsn
+else
+    getsnconf
+fi
+
 exit 0
