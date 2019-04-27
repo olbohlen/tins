@@ -1,0 +1,31 @@
+'\" te
+.\" Copyright (c) 2017 Olaf Bohlen
+.\" The contents of this file are subject to the terms of the Common Development and Distribution License (the "License").  You may not use this file except in compliance with the License.
+.\" You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE or http://www.opensolaris.org/os/licensing.  See the License for the specific language governing permissions and limitations under the License.
+.\" When distributing Covered Code, include this CDDL HEADER in each file and include the License file at usr/src/OPENSOLARIS.LICENSE.  If applicable, add the following below this CDDL HEADER, with the fields enclosed by brackets "[]" replaced with your own identifying information: Portions Copyright [yyyy] [name of copyright owner]
+
+.TH TINS 1M "26 Jun 2017" "" "System Administration Commands"
+.SH NAME
+tins \- stores and reports serial numbers, tins is not sneep
+.SH SYNOPSIS
+.LP
+.nf
+\fB/usr/sbin/tins [-acehp]\fR
+
+\fB/usr/sbin/tins [-s newsn]\fR
+.fi
+
+.SH DESCRIPTION
+.sp
+.LP
+\fBtins\fR can be used to store the chassis serial number in the eeprom nvramrc, like the
+sneep command. It also stores a backup copy in \fB/etc/default/tins\fR.
+It can also be used to read the serial numbers and has a routine to figure out the chassis
+serial number via \fBsmbios\fR(1M) or \fBipmitool\fR(1M).
+
+
+\fBsvc:/system/sysding:system\fR.
+It will read (actually source) a file called \fB/etc/sysding.conf\fR and configure the system.
+The following methods are supported currently:
+.sp
+.LP
